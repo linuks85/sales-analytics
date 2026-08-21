@@ -5,6 +5,15 @@ import streamlit as st
 from modules.upload import load_file, clean_dataframe, get_column_info
 from modules.abc_analysis import analyze_products, analyze_clients, plot_abc, get_abc_insights
 from modules.cashflow import calculate_gap, get_unpaid, plot_cashflow, get_cashflow_insights
+from modules.dynamics import monthly_sales, plot_dynamics, get_dynamics_insights
+from modules.clients import client_summary, churn_risk, plot_clients, get_clients_insights
+from modules.managers import (
+    manager_summary,
+    manager_monthly,
+    plot_managers,
+    plot_managers_trend,
+    get_managers_insights,
+)
 from modules.ai_advisor import get_advice
 
 
@@ -62,12 +71,20 @@ def _select_columns(column_info):
         index=text_columns.index(_guess_column(client_guess_list, ["контрагент", "клиент", "client", "customer"])),
     )
 
+    manager_options = ["— нет —"] + text_columns
+    manager_guess_list = [c for c in text_columns if c not in (product_col, client_col)] or text_columns
+    manager_guess = _guess_column(manager_guess_list, ["менеджер", "manager", "сотрудник"])
+    manager_index = manager_options.index(manager_guess) if manager_guess in manager_options else 0
+    manager_col = st.sidebar.selectbox("Менеджер", manager_options, index=manager_index)
+    manager_col = None if manager_col == "— нет —" else manager_col
+
     return {
         "date_col": date_col,
         "payment_col": payment_col,
         "amount_col": amount_col,
         "product_col": product_col,
         "client_col": client_col,
+        "manager_col": manager_col,
     }
 
 
@@ -98,6 +115,58 @@ def _render_cashflow_tab(df, date_col, payment_col, amount_col):
         st.dataframe(unpaid, use_container_width=True)
 
     insights = get_cashflow_insights(df, date_col, payment_col, amount_col)
+    st.markdown("**Выводы:**")
+    for insight in insights:
+        st.markdown(f"- {insight}")
+
+    return insights
+
+
+def _render_dynamics_tab(df, date_col, amount_col):
+    monthly = monthly_sales(df, date_col, amount_col)
+    st.plotly_chart(plot_dynamics(monthly), use_container_width=True)
+    st.dataframe(monthly, use_container_width=True)
+
+    insights = get_dynamics_insights(monthly)
+    st.markdown("**Выводы:**")
+    for insight in insights:
+        st.markdown(f"- {insight}")
+
+    return insights
+
+
+def _render_clients_tab(df, client_col, amount_col, date_col):
+    summary = client_summary(df, client_col, amount_col, date_col)
+    st.plotly_chart(plot_clients(summary), use_container_width=True)
+
+    st.markdown("**⚠️ Риск оттока**")
+    st.dataframe(churn_risk(summary), use_container_width=True)
+
+    insights = get_clients_insights(summary)
+    st.markdown("**Выводы:**")
+    for insight in insights:
+        st.markdown(f"- {insight}")
+
+    return insights
+
+
+def _render_managers_tab(df, manager_col, amount_col, date_col):
+    if manager_col is None:
+        st.info("Для анализа менеджеров выберите колонку «Менеджер» в сайдбаре.")
+        return []
+
+    summary = manager_summary(df, manager_col, amount_col, date_col)
+    monthly = manager_monthly(df, manager_col, amount_col, date_col)
+
+    col_pie, col_table = st.columns(2)
+    with col_pie:
+        st.plotly_chart(plot_managers(summary), use_container_width=True)
+    with col_table:
+        st.dataframe(summary, use_container_width=True)
+
+    st.plotly_chart(plot_managers_trend(monthly), use_container_width=True)
+
+    insights = get_managers_insights(summary, monthly)
     st.markdown("**Выводы:**")
     for insight in insights:
         st.markdown(f"- {insight}")
@@ -150,7 +219,9 @@ def main():
         st.info("Настройте колонки в сайдбаре и нажмите «Анализировать».")
         return
 
-    tab_abc, tab_cashflow, tab_ai = st.tabs(["ABC-анализ", "Кассовый разрыв", "AI-советы"])
+    tab_abc, tab_cashflow, tab_dynamics, tab_clients, tab_managers, tab_ai = st.tabs(
+        ["ABC-анализ", "Кассовый разрыв", "📈 Динамика продаж", "👥 Клиенты", "🏆 Менеджеры", "AI-советы"]
+    )
 
     with tab_abc:
         abc_insights = _render_abc_tab(df, columns["product_col"], columns["amount_col"])
@@ -159,6 +230,15 @@ def main():
         cashflow_insights = _render_cashflow_tab(
             df, columns["date_col"], columns["payment_col"], columns["amount_col"]
         )
+
+    with tab_dynamics:
+        _render_dynamics_tab(df, columns["date_col"], columns["amount_col"])
+
+    with tab_clients:
+        _render_clients_tab(df, columns["client_col"], columns["amount_col"], columns["date_col"])
+
+    with tab_managers:
+        _render_managers_tab(df, columns["manager_col"], columns["amount_col"], columns["date_col"])
 
     with tab_ai:
         _render_ai_tab(abc_insights, cashflow_insights, api_key)
